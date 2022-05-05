@@ -144,6 +144,9 @@ struct LEDStrip
 // Each bit corresponds to a discovered PWM controller
 uint8_t g_pwms_found = 0;
 
+// Fade interval used if no explicit interval defined in command payload
+uint32_t g_fade_interval_us = DEFAULT_FADE_INTERVAL_US;
+
 // stack size counter (for determine used heap size on ESP8266)
 char * g_stack_start;
 
@@ -303,6 +306,10 @@ void getConfigSchemaJson(JsonVariant json)
   }
   required.add("strip");
   required.add("count");
+
+  JsonObject fadeIntervalUs = properties.createNestedObject("fadeIntervalUs");
+  fadeIntervalUs["type"] = "integer";
+  fadeIntervalUs["minimum"] = 0;
 
   // Add any sensor config
   sensors.setConfigSchema(properties);
@@ -512,7 +519,7 @@ void initialiseStrips(uint8_t controller)
       ledStrip->colour[colour] = 0;
     }
 
-    ledStrip->fadeIntervalUs = DEFAULT_FADE_INTERVAL_US; 
+    ledStrip->fadeIntervalUs = g_fade_interval_us; 
     ledStrip->lastfadeUs = 0L;
   }
 }
@@ -717,12 +724,10 @@ void jsonChannelCommand(JsonVariant json)
   if (json.containsKey("fadeIntervalUs"))
   {
     ledStrip->fadeIntervalUs = json["fadeIntervalUs"].as<uint32_t>();
-
-    // if the fade interval is set to zero then reset to the default
-    if (ledStrip->fadeIntervalUs == 0L)
-    {
-      ledStrip->fadeIntervalUs = DEFAULT_FADE_INTERVAL_US;
-    }
+  }
+  else
+  {
+    ledStrip->fadeIntervalUs = g_fade_interval_us;
   }
 }
 
@@ -753,6 +758,11 @@ void jsonConfig(JsonVariant json)
     {
       jsonChannelConfig(channel);
     }
+  }
+
+  if (json.containsKey("fadeIntervalUs"))
+  {
+    g_fade_interval_us = json["fadeIntervalUs"].as<uint32_t>();
   }
 
   // Let the sensors handle any config
