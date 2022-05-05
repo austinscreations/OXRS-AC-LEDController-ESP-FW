@@ -79,11 +79,9 @@
 // Only support up to 5 LEDs per strip
 #define MAX_LED_COUNT               5
 
-// Supported LED modes
-#define LED_MODE_OFF                0
-#define LED_MODE_COLOUR             1
-#define LED_MODE_FADE               2
-#define LED_MODE_FLASH              3
+// Supported LED states
+#define LED_STATE_OFF               0
+#define LED_STATE_ON                1
 
 // Default fade interval (microseconds)
 #define DEFAULT_FADE_INTERVAL_US    500L;
@@ -135,21 +133,16 @@ struct LEDStrip
 {
   uint8_t index;
   uint8_t channels;
-  uint8_t mode;
+  uint8_t state;
   uint8_t colour[MAX_LED_COUNT];
 
-  uint32_t lastCrossfade;
+  uint32_t fadeIntervalUs;
+  uint32_t lastfadeUs;
 };
 
 /*--------------------------- Global Variables ---------------------------*/
 // Each bit corresponds to a discovered PWM controller
 uint8_t g_pwms_found = 0;
-
-// How long between each fade step
-uint32_t g_fade_interval_us = DEFAULT_FADE_INTERVAL_US;
-
-// Flashing state for any strips in flash mode
-uint8_t g_flash_state = LOW;
 
 // stack size counter (for determine used heap size on ESP8266)
 char * g_stack_start;
@@ -311,10 +304,6 @@ void getConfigSchemaJson(JsonVariant json)
   required.add("strip");
   required.add("count");
 
-  JsonObject fadeIntervalUs = properties.createNestedObject("fadeIntervalUs");
-  fadeIntervalUs["type"] = "integer";
-  fadeIntervalUs["minimum"] = 0;
-
   // Add any sensor config
   sensors.setConfigSchema(properties);
 }
@@ -351,12 +340,11 @@ void getCommandSchemaJson(JsonVariant json)
   strip["minimum"] = 1;
   strip["maximum"] = PWM_CHANNEL_COUNT;
 
-  JsonObject mode = channelProperties.createNestedObject("mode");
-  mode["type"] = "string";
-  JsonArray modeEnum = mode.createNestedArray("enum");
-  modeEnum.add("colour");
-  modeEnum.add("fade");
-  modeEnum.add("flash");
+  JsonObject state = channelProperties.createNestedObject("state");
+  state["type"] = "string";
+  JsonArray stateEnum = state.createNestedArray("enum");
+  stateEnum.add("on");
+  stateEnum.add("off");
 
   JsonObject colour = channelProperties.createNestedObject("colour");
   colour["type"] = "array";
@@ -365,15 +353,16 @@ void getCommandSchemaJson(JsonVariant json)
   JsonObject colourItems = colour.createNestedObject("items");
   colourItems["type"] = "integer";
 
+  JsonObject fadeIntervalUs = channelProperties.createNestedObject("fadeIntervalUs");
+  fadeIntervalUs["type"] = "integer";
+  fadeIntervalUs["minimum"] = 0;
+
   JsonArray required = channelItems.createNestedArray("required");
   if (PWM_CONTROLLER_COUNT > 1)
   {
     required.add("controller");
   }
   required.add("strip");
-
-  JsonObject flash = properties.createNestedObject("flash");
-  flash["type"] = "boolean";
 
   JsonObject restart = properties.createNestedObject("restart");
   restart["type"] = "boolean";
@@ -478,33 +467,9 @@ void ledOff(PWMDriver * driver, LEDStrip * strip, uint8_t channelOffset)
   }  
 }
 
-void ledColour(PWMDriver * driver, LEDStrip * strip, uint8_t channelOffset)
-{
-  if (strip->channels == 1) 
-  {
-    driver->colour(strip->index, channelOffset, strip->colour[0]);
-  }
-  else if (strip->channels == 2) 
-  {
-    driver->colour(strip->index, channelOffset, strip->colour[0], strip->colour[1]);
-  }
-  else if (strip->channels == 3) 
-  {
-    driver->colour(strip->index, channelOffset, strip->colour[0], strip->colour[1], strip->colour[2]);
-  }
-  else if (strip->channels == 4) 
-  {
-    driver->colour(strip->index, channelOffset, strip->colour[0], strip->colour[1], strip->colour[2], strip->colour[3]);
-  }
-  else if (strip->channels == 5) 
-  {
-    driver->colour(strip->index, channelOffset, strip->colour[0], strip->colour[1], strip->colour[2], strip->colour[3], strip->colour[4]);
-  }  
-}
-
 void ledFade(PWMDriver * driver, LEDStrip * strip, uint8_t channelOffset)
 {
-  if ((micros() - strip->lastCrossfade) > g_fade_interval_us)
+  if ((micros() - strip->lastfadeUs) > strip->fadeIntervalUs)
   {    
     if (strip->channels == 1) 
     {
@@ -527,19 +492,7 @@ void ledFade(PWMDriver * driver, LEDStrip * strip, uint8_t channelOffset)
       driver->crossfade(strip->index, channelOffset, strip->colour[0], strip->colour[1], strip->colour[2], strip->colour[3], strip->colour[4]);
     }  
 
-    strip->lastCrossfade = micros();
-  }
-}
-
-void ledFlash(PWMDriver * driver, LEDStrip * strip, uint8_t channelOffset)
-{
-  if (g_flash_state == HIGH)
-  {
-    ledColour(driver, strip, channelOffset);
-  }
-  else
-  {
-    ledOff(driver, strip, channelOffset);
+    strip->lastfadeUs = micros();
   }
 }
 
@@ -552,14 +505,15 @@ void initialiseStrips(uint8_t controller)
     // .index is immutable and shouldn't be changed
     ledStrip->index = strip;
     ledStrip->channels = 0;
-    ledStrip->mode = LED_MODE_OFF;
+    ledStrip->state = LED_STATE_OFF;
 
     for (uint8_t colour = 0; colour < MAX_LED_COUNT; colour++)
     {
       ledStrip->colour[colour] = 0;
     }
-    
-    ledStrip->lastCrossfade = 0L;
+
+    ledStrip->fadeIntervalUs = DEFAULT_FADE_INTERVAL_US; 
+    ledStrip->lastfadeUs = 0L;
   }
 }
 
@@ -573,25 +527,15 @@ void processStrips(uint8_t controller)
   {
     LEDStrip * ledStrip = &ledStrips[controller][strip];
 
-    if (ledStrip->mode == LED_MODE_OFF)
+    if (ledStrip->state == LED_STATE_OFF)
     {
       // off
       ledOff(driver, ledStrip, channelOffset);
     }
-    else if (ledStrip->mode == LED_MODE_COLOUR)
-    {
-      // colour
-      ledColour(driver, ledStrip, channelOffset);
-    }
-    else if (ledStrip->mode == LED_MODE_FADE)
+    else if (ledStrip->state == LED_STATE_ON)
     {
       // fade
       ledFade(driver, ledStrip, channelOffset);
-    }
-    else if (ledStrip->mode == LED_MODE_FLASH)
-    {
-      // flash
-      ledFlash(driver, ledStrip, channelOffset);
     }
   
     // increase offset
@@ -710,7 +654,7 @@ void jsonChannelConfig(JsonVariant json)
 
   // set the config for this strip
   ledStrip->channels = count;
-  ledStrip->mode = LED_MODE_COLOUR;
+  ledStrip->state = LED_STATE_OFF;
 
   for (uint8_t colour = 0; colour < MAX_LED_COUNT; colour++)
   {
@@ -723,7 +667,7 @@ void jsonChannelConfig(JsonVariant json)
     ledStrip = &ledStrips[controller - 1][i];
     
     ledStrip->channels = 0;
-    ledStrip->mode = LED_MODE_OFF;
+    ledStrip->state = LED_STATE_OFF;
 
     for (uint8_t colour = 0; colour < MAX_LED_COUNT; colour++)
     {
@@ -743,27 +687,19 @@ void jsonChannelCommand(JsonVariant json)
   // controller/strip indexes are sent 1-based
   LEDStrip * ledStrip = &ledStrips[controller - 1][strip - 1];
 
-  if (json.containsKey("mode"))
+  if (json.containsKey("state"))
   {
-    if (strcmp(json["mode"], "off") == 0)
+    if (strcmp(json["state"], "on") == 0)
     {
-      ledStrip->mode = LED_MODE_OFF;
+      ledStrip->state = LED_STATE_ON;
     }
-    else if (strcmp(json["mode"], "colour") == 0)
+    else if (strcmp(json["state"], "off") == 0)
     {
-      ledStrip->mode = LED_MODE_COLOUR;
-    }
-    else if (strcmp(json["mode"], "fade") == 0)
-    {
-      ledStrip->mode = LED_MODE_FADE;
-    }
-    else if (strcmp(json["mode"], "flash") == 0)
-    {
-      ledStrip->mode = LED_MODE_FLASH;
+      ledStrip->state = LED_STATE_OFF;
     }
     else 
     {
-      logger.println(F("[ledc] invalid mode"));
+      logger.println(F("[ledc] invalid state"));
     }
   }
 
@@ -777,6 +713,17 @@ void jsonChannelCommand(JsonVariant json)
       ledStrip->colour[colour++] = v.as<uint8_t>();
     }
   }
+
+  if (json.containsKey("fadeIntervalUs"))
+  {
+    ledStrip->fadeIntervalUs = json["fadeIntervalUs"].as<uint32_t>();
+
+    // if the fade interval is set to zero then reset to the default
+    if (ledStrip->fadeIntervalUs == 0L)
+    {
+      ledStrip->fadeIntervalUs = DEFAULT_FADE_INTERVAL_US;
+    }
+  }
 }
 
 void jsonCommand(JsonVariant json)
@@ -787,11 +734,6 @@ void jsonCommand(JsonVariant json)
     {
       jsonChannelCommand(channel);
     }
-  }
-
-  if (json.containsKey("flash"))
-  {
-    g_flash_state = json["flash"].as<bool>() ? HIGH : LOW;
   }
 
   if (json.containsKey("restart") && json["restart"].as<bool>())
@@ -811,11 +753,6 @@ void jsonConfig(JsonVariant json)
     {
       jsonChannelConfig(channel);
     }
-  }
-
-  if (json.containsKey("fadeIntervalUs"))
-  {
-    g_fade_interval_us = json["fadeIntervalUs"].as<uint32_t>();
   }
 
   // Let the sensors handle any config
