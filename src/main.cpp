@@ -49,6 +49,10 @@
 
 #if defined(MCU32)
 #include <WiFi.h>                   // For networking
+#if defined(ETHMODE)
+#include <Ethernet.h>               // For networking
+#include <SPI.h>                    // For ethernet
+#endif
 #endif
 
 #if defined(MCU8266)
@@ -867,7 +871,7 @@ void initialiseWifi()
   logger.println(WiFi.localIP());
 
   // Update OLED display
-  sensors.oled(Ethernet.localIP());
+  sensors.oled(WiFi.localIP());
 
   // Set up MQTT (don't attempt to connect yet)
   initialiseMqtt(mac);
