@@ -137,7 +137,7 @@ struct LEDStrip
   uint8_t colour[MAX_LED_COUNT];
 
   uint32_t fadeIntervalUs;
-  uint32_t lastfadeUs;
+  uint32_t lastFadeUs;
 };
 
 /*--------------------------- Global Variables ---------------------------*/
@@ -450,56 +450,32 @@ void initialisePwmDrivers()
 #endif
 
 /*--------------------------- LED -----------------*/
-void ledOff(PWMDriver * driver, LEDStrip * strip, uint8_t channelOffset)
+void ledFade(PWMDriver * driver, LEDStrip * strip, uint8_t channelOffset, uint8_t colour[])
 {
-  if (strip->channels == 1) 
-  {
-    driver->colour(strip->index, channelOffset, 0);
-  }
-  else if (strip->channels == 2) 
-  {
-    driver->colour(strip->index, channelOffset, 0, 0);
-  }
-  else if (strip->channels == 3) 
-  {
-    driver->colour(strip->index, channelOffset, 0, 0, 0);
-  }
-  else if (strip->channels == 4) 
-  {
-    driver->colour(strip->index, channelOffset, 0, 0, 0, 0);
-  }
-  else if (strip->channels == 5) 
-  {
-    driver->colour(strip->index, channelOffset, 0, 0, 0, 0, 0);
-  }  
-}
-
-void ledFade(PWMDriver * driver, LEDStrip * strip, uint8_t channelOffset)
-{
-  if ((micros() - strip->lastfadeUs) > strip->fadeIntervalUs)
+  if ((micros() - strip->lastFadeUs) > strip->fadeIntervalUs)
   {    
     if (strip->channels == 1) 
     {
-      driver->crossfade(strip->index, channelOffset, strip->colour[0]);
+      driver->crossfade(strip->index, channelOffset, colour[0]);
     }
     else if (strip->channels == 2) 
     {
-      driver->crossfade(strip->index, channelOffset, strip->colour[0], strip->colour[1]);
+      driver->crossfade(strip->index, channelOffset, colour[0], colour[1]);
     }
     else if (strip->channels == 3) 
     {
-      driver->crossfade(strip->index, channelOffset, strip->colour[0], strip->colour[1], strip->colour[2]);
+      driver->crossfade(strip->index, channelOffset, colour[0], colour[1], colour[2]);
     }
     else if (strip->channels == 4) 
     {
-      driver->crossfade(strip->index, channelOffset, strip->colour[0], strip->colour[1], strip->colour[2], strip->colour[3]);
+      driver->crossfade(strip->index, channelOffset, colour[0], colour[1], colour[2], colour[3]);
     }
     else if (strip->channels == 5) 
     {
-      driver->crossfade(strip->index, channelOffset, strip->colour[0], strip->colour[1], strip->colour[2], strip->colour[3], strip->colour[4]);
+      driver->crossfade(strip->index, channelOffset, colour[0], colour[1], colour[2], colour[3], colour[4]);
     }  
 
-    strip->lastfadeUs = micros();
+    strip->lastFadeUs = micros();
   }
 }
 
@@ -520,15 +496,18 @@ void initialiseStrips(uint8_t controller)
     }
 
     ledStrip->fadeIntervalUs = g_fade_interval_us; 
-    ledStrip->lastfadeUs = 0L;
+    ledStrip->lastFadeUs = 0L;
   }
 }
 
 void processStrips(uint8_t controller)
 {
-  uint8_t channelOffset = 0;
+  uint8_t OFF[MAX_LED_COUNT];
+  memset(OFF, 0, sizeof(OFF));
 
   PWMDriver * driver = &pwmDriver[controller];
+
+  uint8_t channelOffset = 0;
 
   for (uint8_t strip = 0; strip < PWM_CHANNEL_COUNT; strip++)
   {
@@ -537,14 +516,14 @@ void processStrips(uint8_t controller)
     if (ledStrip->state == LED_STATE_OFF)
     {
       // off
-      ledOff(driver, ledStrip, channelOffset);
+      ledFade(driver, ledStrip, channelOffset, OFF);
     }
     else if (ledStrip->state == LED_STATE_ON)
     {
       // fade
-      ledFade(driver, ledStrip, channelOffset);
+      ledFade(driver, ledStrip, channelOffset, ledStrip->colour);
     }
-  
+
     // increase offset
     channelOffset += ledStrip->channels;
   }
