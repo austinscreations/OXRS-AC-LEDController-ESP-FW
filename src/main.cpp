@@ -1015,7 +1015,7 @@ void loop()
   mqtt.loop();
 
   // Maintain DHCP lease
-  #if defined(ETHMODE)
+  #if defined(ETHMODE) && not defined(MCULILY)
   Ethernet.maintain();
   #endif
   
