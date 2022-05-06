@@ -1022,10 +1022,10 @@ void loop()
   // Handle any API requests
   #if defined(WIFIMODE) || defined(MCULILY)
   WiFiClient client = server.available();
-  api.checkWifi(&client);
+  api.loop(&client);
   #elif defined(ETHMODE)
   EthernetClient client = server.available();
-  api.checkEthernet(&client);
+  api.loop(&client);
   #endif
 
   // Iterate through each PWM controller
